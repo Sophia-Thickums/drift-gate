@@ -163,13 +163,30 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "stats":
         print(json.dumps(stats(), indent=1))
     elif len(sys.argv) > 1 and sys.argv[1] == "selftest":
-        ok = 0
+        # THE BUG THIS FIXES (found 2026-09-26): a run with no local model produced
+        # "UNKNOWN" for every draft and printed "selftest 0/3", which reads as "the gate
+        # failed on all three". But UNKNOWN means the gate correctly FAILED SHUT because
+        # it could not ask. Scoring that as a miss is the same defect the gate exists to
+        # catch: a test that cannot distinguish "checked and disagreed" from "never checked".
+        results = []
         for draft, expect in SELFTEST:
             r = check_presence(draft)
-            got = r["verdict"]
-            ok += (got == expect)
-            print(f"expect {expect} got {got} :: {draft[:50]}...")
-        print(f"selftest {ok}/{len(SELFTEST)}")
+            results.append((expect, r["verdict"], draft[:50]))
+        reached = [x for x in results if x[1] != "UNKNOWN"]
+        if not reached:
+            print("selftest SKIPPED — the gate could not ask the local model.")
+            print("  All drafts came back UNKNOWN, which is FAIL-SHUT working correctly,")
+            print("  not a test failure. Start the local model and re-run:")
+            print("    curl -s http://127.0.0.1:11434/api/ps")
+            print("  A run that never reached the model proves NOTHING about the gate.")
+            sys.exit(2)
+        ok = 0
+        for expect, got, snippet in results:
+            hit = (got == expect)
+            ok += hit
+            print(f"  {'PASS' if hit else 'FAIL'}  expect {expect} got {got} :: {snippet}...")
+        print(f"selftest {ok}/{len(results)}")
+        sys.exit(0 if ok == len(results) else 1)
     else:
         draft = " ".join(sys.argv[1:]) or __import__("sys").stdin.read()
         print(json.dumps(check_presence(draft), indent=1))
